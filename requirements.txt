@@ -1,0 +1,24 @@
+# Agentic World -- Fine-Tuning Dependencies
+# Install: python -m pip install -r requirements.txt
+
+# Core ML
+torch
+torchvision
+torchaudio
+
+# Unsloth (QLoRA fine-tuning)
+unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git
+
+# Training
+trl
+peft
+accelerate
+transformers
+bitsandbytes
+datasets
+
+# Experiment tracking
+wandb
+
+# Hugging Face Hub
+huggingface-hub

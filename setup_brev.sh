@@ -54,28 +54,18 @@ echo "[OK] pip ready: $(python -m pip --version)"
 echo ""
 
 # ============================================================
-# 3. INSTALL UNSLOTH
+# 3. INSTALL ALL DEPENDENCIES
 # ============================================================
 
-echo "[INSTALL] Installing Unsloth (handles torch, transformers, bitsandbytes)..."
-python -m pip install "unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git"
-
-# Verify unsloth
-python -c "from unsloth import FastLanguageModel; print('[OK] Unsloth installed')"
-
-# ============================================================
-# 4. INSTALL TRAINING DEPENDENCIES
-# ============================================================
-
+echo "[INSTALL] Installing all dependencies from requirements.txt..."
+python -m pip install -r requirements.txt
+echo "[OK] All packages installed"
 echo ""
-echo "[INSTALL] Installing training dependencies..."
-python -m pip install wandb datasets trl peft accelerate
 
 # ============================================================
-# 5. LOGIN TO W&B
+# 4. LOGIN TO W&B
 # ============================================================
 
-echo ""
 echo "[AUTH] Logging into Weights & Biases..."
 if [ -n "$WANDB_API_KEY" ]; then
     wandb login "$WANDB_API_KEY"
@@ -87,7 +77,7 @@ else
 fi
 
 # ============================================================
-# 6. LOGIN TO HUGGING FACE
+# 5. LOGIN TO HUGGING FACE
 # ============================================================
 
 echo ""
@@ -102,7 +92,7 @@ else
 fi
 
 # ============================================================
-# 7. VERIFY EVERYTHING
+# 6. VERIFY EVERYTHING
 # ============================================================
 
 echo ""
@@ -140,7 +130,7 @@ print('     No mamba_ssm needed -- Mistral Nemo is pure Transformer')
 "
 
 # ============================================================
-# 8. DONE
+# 7. DONE
 # ============================================================
 
 echo ""
