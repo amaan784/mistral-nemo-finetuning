@@ -210,8 +210,19 @@ def formatting_func(examples):
         texts.append(text)
     return {"text": texts}
 
-train_dataset = dataset["train"].map(formatting_func, batched=True, remove_columns=["messages"])
-eval_dataset = dataset["eval"].map(formatting_func, batched=True, remove_columns=["messages"])
+train_dataset = dataset["train"].map(
+    formatting_func,
+    batched=True,
+    num_proc=1
+    remove_columns=["messages"],
+)
+
+eval_dataset = dataset["eval"].map(
+    formatting_func,
+    batched=True,
+    num_proc=1,
+    remove_columns=["messages"],
+)
 
 # Log data stats
 text_lengths = [len(t) for t in train_dataset["text"]]
