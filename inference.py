@@ -1,24 +1,29 @@
 """
 ============================================================
-Agentic World — Inference Pipeline
+Agentic World — Inference Pipeline (Policy Generation)
 ============================================================
-Loads fine-tuned Mistral Nemo 12B LoRA adapter and generates
-behavioral profiles for any website description.
+Loads a fine-tuned LoRA adapter and generates a structured
+JSON policy that an autonomous browser agent can execute
+using AgentQL + Playwright.
 
 Usage:
-    # Single website
-    python inference.py --url https://example.com --description "An e-commerce site..."
+    # Generate a policy (print JSON)
+    python inference.py --url https://fun-city-xi.vercel.app/ \
+        --description "A Reddit-style NYC discovery board..."
 
-    # Interactive mode
-    python inference.py --interactive
+    # Generate + execute in browser
+    python inference.py --url https://fun-city-xi.vercel.app/ \
+        --description "..." --execute
 
-    # Batch mode
-    python inference.py --batch sites.json
+    # Generate with user profile
+    python inference.py --url ... --description "..." \
+        --user-profile '{"age_group":"25-34","country":"US"}'
 
-    # Custom adapter path
-    python inference.py --adapter ./my-adapter --url ...
+    # Save policy to file
+    python inference.py --url ... --description "..." --output policy.json
 
-Output: Behavioral profile + AgentQL-compatible action plan
+    # Use a specific policy file (skip generation)
+    python inference.py --policy policy.json --execute
 ============================================================
 """
 
@@ -35,91 +40,139 @@ from datetime import datetime
 
 DEFAULT_MODEL = "mistralai/Mistral-7B-Instruct-v0.3"
 DEFAULT_ADAPTER = "outputs/mistral-nemo-behavioral-lora"
-MAX_SEQ_LENGTH = 4096
 
-SYSTEM_PROMPT = """You are a behavioral simulation model. Given a website description, generate a detailed behavioral profile describing how a user would interact with the website. Include: navigation pattern, reading behavior, engagement style, interaction speed, content preferences, typing behavior, feature discovery, and session flow with specific timings."""
+SYSTEM_PROMPT = """You are a browser automation agent policy generator. Given a website description and a user profile, output a structured JSON policy that an autonomous browser agent can execute using AgentQL and Playwright.
+
+The policy must contain:
+- session_target_duration_s: estimated session length in seconds
+- navigation_style: one of "exploratory", "focused", "scattered", "linear"
+- browsing_speed: one of "fast", "medium", "slow"
+- feed_behavior: how to scan the feed (scroll pattern, sort preference, max posts)
+- post_interaction: comment/vote probabilities, typing speed, read time
+- subreddit_exploration: whether to explore categories, which ones
+- auth_behavior: whether to sign up or log in, and when
+- engagement_arc: early/mid/late session behavior
+- action_sequence: ordered list of actions the agent should execute
+
+Valid actions for action_sequence:
+- scan_feed: scroll through the homepage feed
+- open_post: click on a post to view details
+- signup: create a new account
+- login: log in with existing credentials
+- write_comment: write and submit a comment
+- vote_on_post: upvote or downvote
+- return_to_feed: navigate back to homepage
+- browse_subreddit: explore a category/subreddit
+- open_related_post: click on a trending/related post
+- create_post: create a new post
+
+Output ONLY valid JSON. No markdown, no explanation."""
 
 # ============================================================
 # PARSE ARGS
 # ============================================================
 
-parser = argparse.ArgumentParser(description="Generate behavioral profiles for websites")
+parser = argparse.ArgumentParser(description="Generate browser agent policies and optionally execute them")
 parser.add_argument("--url", type=str, help="Website URL")
 parser.add_argument("--description", type=str, help="Website description")
-parser.add_argument("--interactive", action="store_true", help="Interactive mode")
-parser.add_argument("--batch", type=str, help="Path to JSON file with multiple sites")
+parser.add_argument("--user-profile", type=str, default="{}", help="User profile JSON string")
 parser.add_argument("--adapter", type=str, default=DEFAULT_ADAPTER, help="Path to LoRA adapter")
 parser.add_argument("--model", type=str, default=DEFAULT_MODEL, help="Base model name")
 parser.add_argument("--max-tokens", type=int, default=2048, help="Max output tokens")
 parser.add_argument("--temperature", type=float, default=0.7, help="Sampling temperature")
-parser.add_argument("--output", type=str, help="Output file path (JSON)")
+parser.add_argument("--output", type=str, help="Save policy JSON to file")
+parser.add_argument("--policy", type=str, help="Load existing policy JSON (skip generation)")
+parser.add_argument("--execute", action="store_true", help="Execute the policy in a real browser via AgentQL")
+parser.add_argument("--sandbox-url", type=str, default=None,
+                    help="Sandbox URL for execution (defaults to --url)")
 args = parser.parse_args()
 
 # ============================================================
-# LOAD MODEL + ADAPTER
+# POLICY GENERATION (unless --policy is provided)
 # ============================================================
 
-print("=" * 60)
-print("AGENTIC WORLD — BEHAVIORAL INFERENCE")
-print("=" * 60)
+policy = None
 
-from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
-from peft import PeftModel
+if args.policy:
+    # Load existing policy from file
+    print(f"📂 Loading policy from {args.policy}")
+    with open(args.policy) as f:
+        policy = json.load(f)
+    print(f"  Actions: {len(policy.get('action_sequence', []))}")
+    print(f"  Style: {policy.get('navigation_style')}, Speed: {policy.get('browsing_speed')}")
 
-print(f"\n📦 Loading base model: {args.model}")
-
-bnb_config = BitsAndBytesConfig(
-    load_in_4bit=True,
-    bnb_4bit_quant_type="nf4",
-    bnb_4bit_compute_dtype=torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16,
-    bnb_4bit_use_double_quant=True,
-)
-
-try:
-    import flash_attn  # noqa: F401
-    attn_impl = "flash_attention_2"
-except ImportError:
-    attn_impl = "sdpa"
-
-model = AutoModelForCausalLM.from_pretrained(
-    args.model,
-    quantization_config=bnb_config,
-    device_map="auto",
-    torch_dtype=torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16,
-    attn_implementation=attn_impl,
-    trust_remote_code=True,
-)
-
-tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
-
-if tokenizer.pad_token is None:
-    tokenizer.pad_token = tokenizer.eos_token
-
-# Load LoRA adapter if it exists
-if os.path.exists(args.adapter):
-    print(f"🔧 Loading LoRA adapter: {args.adapter}")
-    model = PeftModel.from_pretrained(model, args.adapter)
-    print(f"🔀 Merging adapter into base model for fast inference...")
-    model = model.merge_and_unload()
-    print(f"✅ Adapter merged")
 else:
-    print(f"⚠️  No adapter found at {args.adapter}, using base model")
+    # Generate policy using finetuned model
+    if not args.url or not args.description:
+        print("Usage:")
+        print("  python inference.py --url URL --description 'Site description...'")
+        print("  python inference.py --policy policy.json --execute")
+        sys.exit(1)
 
-model.eval()
-print(f"✅ Model ready for inference\n")
+    print("=" * 60)
+    print("AGENTIC WORLD — POLICY GENERATION")
+    print("=" * 60)
 
-# ============================================================
-# GENERATION FUNCTION
-# ============================================================
+    from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+    from peft import PeftModel
 
-def generate_profile(url: str, description: str) -> str:
-    """Generate a behavioral profile for a website."""
-    user_content = f"Website: {url}\nDescription: {description}"
+    print(f"\n📦 Loading base model: {args.model}")
+
+    bnb_config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_compute_dtype=torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16,
+        bnb_4bit_use_double_quant=True,
+    )
+
+    try:
+        import flash_attn  # noqa: F401
+        attn_impl = "flash_attention_2"
+    except ImportError:
+        attn_impl = "sdpa"
+
+    model = AutoModelForCausalLM.from_pretrained(
+        args.model,
+        quantization_config=bnb_config,
+        device_map="auto",
+        torch_dtype=torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16,
+        attn_implementation=attn_impl,
+        trust_remote_code=True,
+    )
+
+    tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
+
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    # Load LoRA adapter if it exists
+    if os.path.exists(args.adapter):
+        print(f"🔧 Loading LoRA adapter: {args.adapter}")
+        model = PeftModel.from_pretrained(model, args.adapter)
+        print(f"🔀 Merging adapter into base model for fast inference...")
+        model = model.merge_and_unload()
+        print(f"✅ Adapter merged")
+    else:
+        print(f"⚠️  No adapter found at {args.adapter}, using base model")
+
+    model.eval()
+    print(f"✅ Model ready for inference\n")
+
+    # Build user prompt
+    user_content = f"Website: {args.url}\nDescription: {args.description}"
+    try:
+        user_profile = json.loads(args.user_profile)
+        if user_profile:
+            user_content += f"\n\nUser Profile:\n{json.dumps(user_profile, indent=2)}"
+    except json.JSONDecodeError:
+        print(f"⚠️  Invalid --user-profile JSON, ignoring")
 
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": user_content},
     ]
+
+    print(f"⏳ Generating policy for {args.url}...")
 
     input_ids = tokenizer.apply_chat_template(
         messages, tokenize=True, add_generation_prompt=True, return_tensors="pt",
@@ -137,105 +190,117 @@ def generate_profile(url: str, description: str) -> str:
             do_sample=True,
         )
 
-    response = tokenizer.decode(output[0][input_ids.shape[1]:], skip_special_tokens=True)
-    return response
+    raw_response = tokenizer.decode(output[0][input_ids.shape[1]:], skip_special_tokens=True)
 
+    # Parse JSON from model output
+    try:
+        policy = json.loads(raw_response)
+    except json.JSONDecodeError:
+        # Try to extract JSON from the response (model might add extra text)
+        import re
+        json_match = re.search(r'\{.*\}', raw_response, re.DOTALL)
+        if json_match:
+            try:
+                policy = json.loads(json_match.group())
+            except json.JSONDecodeError:
+                print(f"\n❌ Could not parse policy JSON from model output:")
+                print(raw_response[:2000])
+                sys.exit(1)
+        else:
+            print(f"\n❌ Model did not produce valid JSON:")
+            print(raw_response[:2000])
+            sys.exit(1)
 
-def profile_to_action_plan(profile: str, url: str) -> dict:
-    """Convert behavioral profile to AgentQL-compatible action plan."""
-    return {
-        "url": url,
-        "behavioral_profile": profile,
-        "generated_at": datetime.now().isoformat(),
-        "model": args.model,
-        "adapter": args.adapter if os.path.exists(args.adapter) else None,
-        "agentql_prompt": (
-            f"You are a browser automation agent. Visit {url} and interact with it "
-            f"exactly as described in this behavioral profile:\n\n{profile}\n\n"
-            f"Execute each action in sequence with the specified timings. "
-            f"Use AgentQL queries to locate elements and interact with them."
-        ),
-    }
+    # Print policy summary
+    print(f"\n{'='*60}")
+    print("GENERATED POLICY")
+    print("=" * 60)
+    print(json.dumps(policy, indent=2))
+    print(f"\n  Actions: {len(policy.get('action_sequence', []))}")
+    print(f"  Style: {policy.get('navigation_style')}, Speed: {policy.get('browsing_speed')}")
+    print(f"  Sequence: {policy.get('action_sequence', [])}")
 
 # ============================================================
-# EXECUTION MODES
+# SAVE POLICY
 # ============================================================
 
-if args.interactive:
-    # Interactive mode
-    print("🎮 Interactive mode — type 'quit' to exit\n")
-    results = []
+if args.output and policy:
+    with open(args.output, "w") as f:
+        json.dump(policy, f, indent=2)
+    print(f"\n💾 Policy saved to {args.output}")
 
-    while True:
-        url = input("URL: ").strip()
-        if url.lower() == "quit":
-            break
+# ============================================================
+# EXECUTE POLICY (optional)
+# ============================================================
 
-        description = input("Description: ").strip()
-        if description.lower() == "quit":
-            break
-
-        print(f"\n⏳ Generating behavioral profile...")
-        profile = generate_profile(url, description)
-
-        print(f"\n{'='*60}")
-        print(f"BEHAVIORAL PROFILE — {url}")
-        print(f"{'='*60}")
-        print(profile)
-        print(f"\n{'='*60}")
-        print(f"Length: {len(profile)} chars, ~{len(profile)//4} tokens\n")
-
-        results.append(profile_to_action_plan(profile, url))
-
-    if args.output and results:
-        with open(args.output, "w") as f:
-            json.dump(results, f, indent=2)
-        print(f"\n💾 Saved {len(results)} profiles to {args.output}")
-
-elif args.batch:
-    # Batch mode
-    print(f"📦 Batch mode — loading {args.batch}")
-    with open(args.batch) as f:
-        sites = json.load(f)
-
-    results = []
-    for i, site in enumerate(sites):
-        url = site["url"]
-        description = site["description"]
-        print(f"\n[{i+1}/{len(sites)}] Generating profile for {url}...")
-
-        profile = generate_profile(url, description)
-        result = profile_to_action_plan(profile, url)
-        results.append(result)
-
-        print(f"   ✅ {len(profile)} chars generated")
-
-    output_path = args.output or f"behavioral_profiles_{datetime.now().strftime('%Y%m%d_%H%M')}.json"
-    with open(output_path, "w") as f:
-        json.dump(results, f, indent=2)
-    print(f"\n💾 Saved {len(results)} profiles to {output_path}")
-
-elif args.url and args.description:
-    # Single-shot mode
-    print(f"⏳ Generating behavioral profile for {args.url}...")
-    profile = generate_profile(args.url, args.description)
+if args.execute and policy:
+    sandbox_url = args.sandbox_url or args.url
+    if not sandbox_url:
+        print("❌ --execute requires --url or --sandbox-url")
+        sys.exit(1)
 
     print(f"\n{'='*60}")
-    print(f"BEHAVIORAL PROFILE — {args.url}")
-    print(f"{'='*60}")
-    print(profile)
+    print("EXECUTING POLICY IN BROWSER")
+    print("=" * 60)
+    print(f"  Target: {sandbox_url}")
+    print(f"  Actions: {policy.get('action_sequence', [])}")
+
+    # Try to import BehavioralAgent from PosthogAgent
+    posthog_agent_path = os.path.join(os.path.dirname(__file__), "..", "PosthogAgent")
+    sys.path.insert(0, os.path.abspath(posthog_agent_path))
+
+    try:
+        from pipeline.stage5_execute import BehavioralAgent
+        from feedback.session_logger import SessionLogger
+    except ImportError:
+        # Fallback: look in sibling directory
+        alt_path = os.path.join(os.path.dirname(__file__), "..", "PosthogAgent")
+        sys.path.insert(0, os.path.abspath(alt_path))
+        try:
+            from pipeline.stage5_execute import BehavioralAgent
+            from feedback.session_logger import SessionLogger
+        except ImportError as e:
+            print(f"\n❌ Cannot import BehavioralAgent: {e}")
+            print("   Make sure PosthogAgent is in a sibling directory.")
+            print("   Or install agentql + playwright in your environment.")
+            sys.exit(1)
+
+    # Get Mistral API key for comment generation
+    mistral_key = os.environ.get("MISTRAL_API_KEY", "")
+    if not mistral_key:
+        try:
+            from dotenv import load_dotenv
+            load_dotenv()
+            mistral_key = os.environ.get("MISTRAL_API_KEY", "")
+        except ImportError:
+            pass
+
+    session_id = f"inference_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    logger = SessionLogger(session_id=session_id)
+
+    agent = BehavioralAgent(
+        policy=policy,
+        sandbox_url=sandbox_url,
+        mistral_api_key=mistral_key,
+        session_logger=logger,
+    )
+
+    print(f"\n� Launching agent...")
+    agent.run()
+
+    # Save agent log
+    log_path = f"agent_log_{session_id}.json"
+    logger.save(log_path)
+    summary = logger.get_summary()
+
     print(f"\n{'='*60}")
-    print(f"Length: {len(profile)} chars, ~{len(profile)//4} tokens")
+    print("EXECUTION COMPLETE")
+    print("=" * 60)
+    print(f"  Duration: {summary['total_duration_s']}s")
+    print(f"  Actions: {summary['total_actions']} "
+          f"({summary['successful_actions']} ok, {summary['failed_actions']} failed)")
+    print(f"  Log: {log_path}")
 
-    if args.output:
-        result = profile_to_action_plan(profile, args.url)
-        with open(args.output, "w") as f:
-            json.dump(result, f, indent=2)
-        print(f"\n💾 Saved to {args.output}")
-
-else:
-    print("Usage:")
-    print("  python inference.py --url URL --description 'Site description...'")
-    print("  python inference.py --interactive")
-    print("  python inference.py --batch sites.json")
-    sys.exit(1)
+elif not args.execute and policy:
+    print(f"\nTo execute this policy in a browser, re-run with --execute")
+    print(f"  python inference.py --policy {args.output or 'policy.json'} --execute --url {args.url or 'TARGET_URL'}")

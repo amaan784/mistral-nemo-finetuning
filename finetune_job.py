@@ -365,14 +365,19 @@ if not cli_args.skip_inference:
     # Merge LoRA into base for clean inference (avoids dtype mismatches)
     merged_model = model.merge_and_unload()
 
-    test_input = """Website: https://vinyl-vault.example.com/
-Description: An online store selling vintage vinyl records. The homepage features a hero banner with staff picks, a genre filter sidebar (Jazz, Rock, Electronic, Classical, Hip-Hop), and a grid of album cards showing cover art, artist name, album title, price, and condition rating."""
+    test_system = (
+        "You are a browser automation agent policy generator. Given a website description "
+        "and a user profile, output a structured JSON policy that an autonomous browser agent "
+        "can execute using AgentQL and Playwright. Output ONLY valid JSON."
+    )
+    test_input = """Website: https://fun-city-xi.vercel.app/
+Description: FunCity is a Reddit-style NYC discovery board where users browse posts organized by NYC boroughs and topics. The homepage shows a feed of user posts sorted by Hot, New, or Top tabs.
+
+User Profile:
+{"age_group": "25-34", "country": "United States", "nyc_familiarity": "visitor", "device_type": "Desktop", "browser": "Chrome", "os": "Mac OS X"}"""
 
     messages = [
-        {
-            "role": "system",
-            "content": "You are a behavioral simulation model. Given a website description, generate a detailed behavioral profile describing how a user would interact with the website. Include: navigation pattern, reading behavior, engagement style, interaction speed, content preferences, typing behavior, feature discovery, and session flow with specific timings.",
-        },
+        {"role": "system", "content": test_system},
         {"role": "user", "content": test_input},
     ]
 
@@ -393,7 +398,7 @@ Description: An online store selling vintage vinyl records. The homepage feature
     response = tokenizer.decode(output[0][input_ids.shape[1]:], skip_special_tokens=True)
 
     print(f"\n{'='*60}")
-    print("INFERENCE TEST — Vinyl Record Store")
+    print("INFERENCE TEST — Policy Generation")
     print("=" * 60)
     print(response[:2000])
 
