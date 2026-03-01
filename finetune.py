@@ -5,6 +5,7 @@ from datetime import datetime
 from trl import SFTTrainer, SFTConfig
 from unsloth import FastLanguageModel
 from datasets import load_dataset
+from datasets import Dataset as HFDataset
 
 """
 ============================================================
@@ -206,11 +207,14 @@ def to_text(messages):
         add_generation_prompt=False,
     )
 
-train_texts = [to_text(m) for m in dataset["train"]["messages"]]
-eval_texts  = [to_text(m) for m in dataset["eval"]["messages"]]
+train_texts = [to_text(ex["messages"]) for ex in dataset["train"]]
+eval_texts  = [to_text(ex["messages"]) for ex in dataset["eval"]]
 
-train_dataset = dataset["train"].remove_columns(["messages"]).add_column("text", train_texts)
-eval_dataset  = dataset["eval"].remove_columns(["messages"]).add_column("text", eval_texts)
+assert len(train_texts) == len(dataset["train"]), (len(train_texts), len(dataset["train"]))
+assert len(eval_texts)  == len(dataset["eval"]),  (len(eval_texts),  len(dataset["eval"]))
+
+train_dataset = HFDataset.from_dict({"text": train_texts})
+eval_dataset  = HFDataset.from_dict({"text": eval_texts})
 
 # Log data stats
 text_lengths = [len(t) for t in train_dataset["text"]]
