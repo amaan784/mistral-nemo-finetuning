@@ -1,26 +1,28 @@
 # Agentic World -- Fine-Tuning Dependencies
-# Install: python -m pip install -r requirements.txt
+# Install: pip install -r requirements.txt
 
 # Core ML
 torch
 torchvision
 torchaudio
 
-# Unsloth (QLoRA fine-tuning)
-# Training
-unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git
-unsloth_zoo @ git+https://github.com/unslothai/unsloth-zoo.git
+# Model loading + quantization
+transformers>=4.45.0
+bitsandbytes>=0.43.0
 
-# Training
-trl==0.24.0
-transformers==4.57.6
-peft
-accelerate
-bitsandbytes
+# LoRA adapters
+peft>=0.12.0
+
+# Supervised fine-tuning
+trl>=0.9.0
+
+# Utilities
+accelerate>=0.33.0
 datasets
-
-# Experiment tracking
-wandb
-
-# Hugging Face Hub
 huggingface-hub
+
+# Flash Attention 2 (optional but recommended for speed)
+# pip install flash-attn --no-build-isolation
+
+# Experiment tracking (observation only)
+wandb

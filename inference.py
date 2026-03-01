@@ -26,13 +26,14 @@ import os
 import sys
 import json
 import argparse
+import torch
 from datetime import datetime
 
 # ============================================================
 # CONFIG
 # ============================================================
 
-DEFAULT_MODEL = "unsloth/Mistral-Nemo-Instruct-2407-bnb-4bit"
+DEFAULT_MODEL = "mistralai/Mistral-Nemo-Instruct-2407"
 DEFAULT_ADAPTER = "outputs/mistral-nemo-behavioral-lora"
 MAX_SEQ_LENGTH = 4096
 
@@ -62,26 +63,40 @@ print("=" * 60)
 print("AGENTIC WORLD — BEHAVIORAL INFERENCE")
 print("=" * 60)
 
-from unsloth import FastLanguageModel
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+from peft import PeftModel
 
 print(f"\n📦 Loading base model: {args.model}")
-model, tokenizer = FastLanguageModel.from_pretrained(
-    model_name=args.model,
-    max_seq_length=MAX_SEQ_LENGTH,
-    dtype=None,
+
+bnb_config = BitsAndBytesConfig(
     load_in_4bit=True,
+    bnb_4bit_quant_type="nf4",
+    bnb_4bit_compute_dtype=torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16,
+    bnb_4bit_use_double_quant=True,
 )
+
+model = AutoModelForCausalLM.from_pretrained(
+    args.model,
+    quantization_config=bnb_config,
+    device_map="auto",
+    torch_dtype=torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16,
+    trust_remote_code=True,
+)
+
+tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
+
+if tokenizer.pad_token is None:
+    tokenizer.pad_token = tokenizer.eos_token
 
 # Load LoRA adapter if it exists
 if os.path.exists(args.adapter):
     print(f"🔧 Loading LoRA adapter: {args.adapter}")
-    from peft import PeftModel
     model = PeftModel.from_pretrained(model, args.adapter)
     print(f"✅ Adapter loaded")
 else:
     print(f"⚠️  No adapter found at {args.adapter}, using base model")
 
-FastLanguageModel.for_inference(model)
+model.eval()
 print(f"✅ Model ready for inference\n")
 
 # ============================================================
@@ -99,15 +114,16 @@ def generate_profile(url: str, description: str) -> str:
 
     input_ids = tokenizer.apply_chat_template(
         messages, tokenize=True, add_generation_prompt=True, return_tensors="pt",
-    ).to("cuda")
+    ).to(model.device)
 
-    output = model.generate(
-        input_ids=input_ids,
-        max_new_tokens=args.max_tokens,
-        temperature=args.temperature,
-        top_p=0.9,
-        do_sample=True,
-    )
+    with torch.no_grad():
+        output = model.generate(
+            input_ids=input_ids,
+            max_new_tokens=args.max_tokens,
+            temperature=args.temperature,
+            top_p=0.9,
+            do_sample=True,
+        )
 
     response = tokenizer.decode(output[0][input_ids.shape[1]:], skip_special_tokens=True)
     return response
