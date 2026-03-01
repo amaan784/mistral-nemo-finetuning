@@ -130,12 +130,20 @@ bnb_config = BitsAndBytesConfig(
     bnb_4bit_use_double_quant=True,
 )
 
+try:
+    import flash_attn  # noqa: F401
+    attn_impl = "flash_attention_2"
+    print("  Using Flash Attention 2")
+except ImportError:
+    attn_impl = "sdpa"
+    print("  Flash Attention 2 not found, using SDPA (torch native)")
+
 model = AutoModelForCausalLM.from_pretrained(
     C["model_name"],
     quantization_config=bnb_config,
     device_map="auto",
     torch_dtype=torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16,
-    attn_implementation="flash_attention_2",
+    attn_implementation=attn_impl,
     trust_remote_code=True,
 )
 
