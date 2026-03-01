@@ -56,6 +56,7 @@ parser.add_argument("--lora-alpha", type=int, default=32)
 parser.add_argument("--max-seq-length", type=int, default=2048)
 parser.add_argument("--output-dir", type=str, default="outputs/mistral-nemo-behavioral-lora")
 parser.add_argument("--no-wandb", action="store_true", help="Disable W&B tracking")
+parser.add_argument("--skip-inference", action="store_true", help="Skip inference test after training")
 cli_args = parser.parse_args()
 
 # ============================================================
@@ -354,48 +355,54 @@ if USE_WANDB:
     print(f"  Artifact logged: mistral-nemo-behavioral-lora")
 
 # ============================================================
-# TEST INFERENCE
+# TEST INFERENCE (optional)
 # ============================================================
 
-print(f"\nRunning inference test...")
+if not cli_args.skip_inference:
+    print(f"\nRunning inference test...")
 
-# Merge adapter for inference (or just use the PEFT model directly)
-model.eval()
+    model.eval()
+    # Merge LoRA into base for clean inference (avoids dtype mismatches)
+    merged_model = model.merge_and_unload()
 
-test_input = """Website: https://vinyl-vault.example.com/
+    test_input = """Website: https://vinyl-vault.example.com/
 Description: An online store selling vintage vinyl records. The homepage features a hero banner with staff picks, a genre filter sidebar (Jazz, Rock, Electronic, Classical, Hip-Hop), and a grid of album cards showing cover art, artist name, album title, price, and condition rating."""
 
-messages = [
-    {
-        "role": "system",
-        "content": "You are a behavioral simulation model. Given a website description, generate a detailed behavioral profile describing how a user would interact with the website. Include: navigation pattern, reading behavior, engagement style, interaction speed, content preferences, typing behavior, feature discovery, and session flow with specific timings.",
-    },
-    {"role": "user", "content": test_input},
-]
+    messages = [
+        {
+            "role": "system",
+            "content": "You are a behavioral simulation model. Given a website description, generate a detailed behavioral profile describing how a user would interact with the website. Include: navigation pattern, reading behavior, engagement style, interaction speed, content preferences, typing behavior, feature discovery, and session flow with specific timings.",
+        },
+        {"role": "user", "content": test_input},
+    ]
 
-input_ids = tokenizer.apply_chat_template(
-    messages, tokenize=True, add_generation_prompt=True, return_tensors="pt",
-).to(model.device)
+    input_ids = tokenizer.apply_chat_template(
+        messages, tokenize=True, add_generation_prompt=True, return_tensors="pt",
+    ).to(merged_model.device)
+    attention_mask = torch.ones_like(input_ids)
 
-with torch.no_grad():
-    output = model.generate(
-        input_ids=input_ids,
-        max_new_tokens=2048,
-        temperature=0.7,
-        top_p=0.9,
-        do_sample=True,
-    )
-response = tokenizer.decode(output[0][input_ids.shape[1]:], skip_special_tokens=True)
+    with torch.no_grad():
+        output = merged_model.generate(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            max_new_tokens=2048,
+            temperature=0.7,
+            top_p=0.9,
+            do_sample=True,
+        )
+    response = tokenizer.decode(output[0][input_ids.shape[1]:], skip_special_tokens=True)
 
-print(f"\n{'='*60}")
-print("INFERENCE TEST — Vinyl Record Store")
-print("=" * 60)
-print(response[:2000])
+    print(f"\n{'='*60}")
+    print("INFERENCE TEST — Vinyl Record Store")
+    print("=" * 60)
+    print(response[:2000])
 
-if USE_WANDB:
-    inference_table = wandb.Table(columns=["input", "output", "length"])
-    inference_table.add_data(test_input[:300], response[:1000], len(response))
-    wandb.log({"inference_test": inference_table})
+    if USE_WANDB:
+        inference_table = wandb.Table(columns=["input", "output", "length"])
+        inference_table.add_data(test_input[:300], response[:1000], len(response))
+        wandb.log({"inference_test": inference_table})
+else:
+    print("\nSkipping inference test (--skip-inference).")
 
 # ============================================================
 # DONE
