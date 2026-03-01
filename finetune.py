@@ -1,3 +1,11 @@
+import os
+import json
+import torch
+from datetime import datetime
+from trl import SFTTrainer, SFTConfig
+from unsloth import FastLanguageModel
+from datasets import load_dataset
+
 """
 ============================================================
 Agentic World — Fine-Tuning Pipeline
@@ -34,13 +42,6 @@ Expected time: 10-20 minutes for 37 examples
 ============================================================
 """
 
-import os
-import json
-import torch
-from datetime import datetime
-from trl import SFTTrainer, SFTConfig
-from unsloth import FastLanguageModel
-from datasets import load_dataset
 
 # ============================================================
 # CONFIG
