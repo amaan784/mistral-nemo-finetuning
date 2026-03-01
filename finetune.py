@@ -243,7 +243,7 @@ print(f"   Scheduler: {LR_SCHEDULER}")
 
 trainer = SFTTrainer(
     model=model,
-    processing_class=tokenizer
+    processing_class=tokenizer,
     train_dataset=train_dataset,
     eval_dataset=eval_dataset,
     args=SFTConfig(
