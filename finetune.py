@@ -213,7 +213,7 @@ def formatting_func(examples):
 train_dataset = dataset["train"].map(
     formatting_func,
     batched=True,
-    num_proc=1
+    num_proc=1,
     remove_columns=["messages"],
 )
 
