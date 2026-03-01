@@ -33,7 +33,7 @@ from datetime import datetime
 # CONFIG
 # ============================================================
 
-DEFAULT_MODEL = "mistralai/Mistral-Nemo-Instruct-2407"
+DEFAULT_MODEL = "mistralai/Mistral-7B-Instruct-v0.3"
 DEFAULT_ADAPTER = "outputs/mistral-nemo-behavioral-lora"
 MAX_SEQ_LENGTH = 4096
 
