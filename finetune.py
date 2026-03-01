@@ -136,10 +136,14 @@ print(f"   4-bit quantization: {LOAD_IN_4BIT}")
 
 model, tokenizer = FastLanguageModel.from_pretrained(
     model_name=MODEL_NAME,
-    max_length=MAX_SEQ_LENGTH,
+    max_seq_length=MAX_SEQ_LENGTH,
     dtype=DTYPE,
     load_in_4bit=LOAD_IN_4BIT,
 )
+
+if tokenizer.pad_token is None:
+    tokenizer.pad_token = tokenizer.eos_token
+tokenizer.padding_side = "right"
 
 print(f"✅ Model loaded successfully")
 print(f"   Parameters: {sum(p.numel() for p in model.parameters()):,}")
