@@ -243,7 +243,7 @@ print(f"   Scheduler: {LR_SCHEDULER}")
 
 trainer = SFTTrainer(
     model=model,
-    tokenizer=tokenizer,
+    processing_class=tokenizer
     train_dataset=train_dataset,
     eval_dataset=eval_dataset,
     args=SFTConfig(
@@ -267,7 +267,7 @@ trainer = SFTTrainer(
         greater_is_better=False,
         report_to="wandb" if USE_WANDB else "none",
         run_name=WANDB_RUN_NAME if USE_WANDB else None,
-        max_seq_length=MAX_SEQ_LENGTH,
+        max_length=MAX_SEQ_LENGTH,
         dataset_text_field="text",
         packing=False,
     ),
